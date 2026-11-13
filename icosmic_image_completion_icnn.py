@@ -1,8 +1,6 @@
 import os
 import sys
-# Single-threaded BLAS / XLA, so that CPU time (summed over all threads of the process) is comparable between methods.
-# These only take effect if they are set BEFORE numpy / jax are imported, and setdefault does not override values
-# that are already set in the environment - both cases are detected and reported.
+# Single-threaded BLAS / XLA
 _PRELOADED = [mod for mod in ("numpy", "jax") if mod in sys.modules]
 
 
@@ -70,10 +68,10 @@ from scipy.ndimage import zoom
 from scipy.optimize import minimize
 from sklearn.datasets import load_digits
 from scipy.sparse.linalg import cg as sp_cg, LinearOperator
-try:                                   # only needed for QP_SOLVER = "gurobi"
+try:                                   
     import gurobipy as gp
     from gurobipy import GRB
-except Exception:                      # pragma: no cover
+except Exception:                      
     gp = GRB = None
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -121,8 +119,8 @@ REF_LBFGS_ITER = 5000      # L-BFGS-B iterations used to locate the reference so
 ACT_TOL = 1e-6             # a pixel is considered active if it is this close to its bound
 
 # --- experiment --------------------------------------------------------------
-N_ITER = _env("N_ITER", 3000)          # iterations per run (COSMIC, ADAM-AL, ADAM-PEN)
-N_ITER_FL = _env("N_ITER_FL", 3000)     # FL solves a QP per iteration, so it gets fewer iterations
+N_ITER = _env("N_ITER", 3000)         
+N_ITER_FL = _env("N_ITER_FL", 3000)     
 ERR_TOL = 1e-3
 ERR_TOL_TIGHT = 1e-8
 KKT_TOL = 1e-6
@@ -132,10 +130,7 @@ N_TIME_ITER = _env("N_TIME_ITER", 500) # iterations of one stand-alone timing ru
 TIME_REPEATS = _env("TIME_REPEATS", 5) # timing runs per configuration, interleaved over the configurations (best one is used)
 SHOW_PLOTS = os.environ.get("PICNN_SHOW", "1") == "1"
 
-# --- methods and hyperparameters (set by hand; there is no automatic tuning) -----------------
 METHOD_ORDER = ["COSMIC", "FL", "ADAM-AL", "ADAM-PEN", "PGD-MOM"]   # remove a name to skip a method
-# Hyperparameters of every method: edit freely.  An entry is either one dict or a LIST of dicts; with a list the method
-# is run once per dict and every setting gets its own curve, CSV rows and summary line.
 COSMIC_K_VALUES = [5.0]     # values of the COSMIC gain K to compare
 HYPERPARAMS = {
     "COSMIC": dict(dt=0.3, K=5, beta=0.1, eps_sat=0.1),
@@ -145,26 +140,15 @@ HYPERPARAMS = {
     "PGD-MOM": dict(lr=0.01, mom=0.9),
 }
 
-# COSMIC fixed settings
 EPS_VAL = 1e-10
 R_EPS, EPS_MIN, EPS_MAX, C_SHRINK = 1.05, 1e-16, 1e-1, 0.85
 
-# Adam + quadratic penalty (ADAM-PEN): no multipliers,
-#   P_rho(x) = f(x) + rho/2 * sum_i max(0, g_i)^2 ,  rho <- min(rho * growth, RHO_MAX) every `inner` steps
-#   (penalty continuation); the multiplier estimate for the KKT metric is rho * max(0, g).
-# Adam + augmented Lagrangian (PHR / method of multipliers)
-#   L_rho(x, lam) = f(x) + 1/(2 rho) * sum_i ( max(0, lam_i + rho g_i)^2 - lam_i^2 )
-#   inner: Adam steps on x for `inner` iterations, outer: lam <- max(0, lam + rho g(x)),
-#   rho <- min(rho * growth, RHO_MAX), lr <- max(lr * decay, LR_MIN)
-RHO_MAX, LR_MIN = 1e4, 1e-7
 RESET_ADAM = True      # reset Adam moments after each multiplier update
 B1, B2, ADAM_EPS = 0.9, 0.999, 1e-8
 
-QP_SOLVER = os.environ.get("PICNN_QP", "gurobi")   # QP solver for FL: "gurobi" (as in First_Order_Opt.ipynb; the QP has
-                        # m = 4096 variables, which needs a full licence - the restricted pip licence stops at 2000) or
-                        # "clarabel" (pip install clarabel; interior point, tolerance 1e-12, no licence needed)
-QP_RIDGE = 1e-10        # FL: tiny ridge so the rank-deficient J J^T is accepted as PSD
-CAP = 1e12              # non-finite values are stored as this in the CSV files
+QP_SOLVER = os.environ.get("PICNN_QP", "gurobi") 
+QP_RIDGE = 1e-10        
+CAP = 1e12              
 
 os.makedirs(FOLDER, exist_ok=True)
 
@@ -258,12 +242,10 @@ def picnn(pr, y):
     Returns F(x, y) = f_theta(x, y) + MU/2 ||y||^2, convex in y."""
     p, x = pr["net"], pr["u"]
     Y = y.reshape(HALF_H, HALF_W, 1)
-    # input path
     u1 = jax.nn.relu(conv(x, p["Wt1"], (4, 2)) + p["bt1"])                  # 16 x 16 x 32
     u2 = jax.nn.relu(conv(u1, p["Wt2"], (2, 2)) + p["bt2"])                 # 8 x 8 x 64
     u3 = jax.nn.relu(conv(u2, p["Wt3"]) + p["bt3"])                         # 8 x 8 x 64
     u4 = jax.nn.relu(u3.reshape(-1) @ p["Wt4"] + p["bt4"])                  # 512
-    # output path
     gy = conv(x, p["Wyu0"]) + p["byu0"]                                     # gate of y (any sign: y enters linearly)
     z1 = g_act(conv(Y * gy, p["Wy0"], (4, 2)) + conv(x, p["Wu0"], (4, 2)) + p["b0"])
     g1 = jax.nn.relu(conv(u1, p["Wzu1"]) + p["bzu1"])
@@ -283,7 +265,6 @@ grad_icnn = jax.grad(icnn, argnums=1)
 
 def hvp_icnn(pr, x, v):                           # Hessian-vector product (forward over reverse)
     return jax.jvp(lambda z: grad_icnn(pr, z), (x,), (v,))[1]
-
 
 tmap = jax.tree_util.tree_map
 
@@ -359,11 +340,8 @@ print(f"convexity check  v'Hv/|v|^2 at 4 random (y, v): min = {min(_chk):.4f}  (
 
 
 # =============================================================================
-# Completion problems:  g(y) = A y - b <= 0 with A = [I; -I], b = [1; 0]  (pixel-wise bounds 0 <= y <= 1)
+# Completion problems: 
 # =============================================================================
-# The constraint matrix A = [P; -P; I; -I] is never formed inside the JAX solvers: they receive P (here an
-# empty 0 x n matrix, the observation constraints being merged into the pixel bounds) and use these
-# structured products (cost O(n)).
 def m_of(P):
     return 2 * P.shape[0] + 2 * P.shape[1]
 
@@ -410,14 +388,6 @@ def kkt_of(x, lam, prob):
 
 
 def solve_reference(prob):
-    """Strongly convex problem -> unique minimiser, computed independently of the compared methods:
-      1. L-BFGS-B (scipy, bound constraints) from the mid-gray image locates the solution and its active set;
-      2. an active-set Newton method polishes it: pixels at a bound are fixed, the free pixels solve grad_F = 0 by
-         Newton's method (matrix-free CG with exact Hessian-vector products), and the active set is corrected
-         (a free pixel leaving [lo, hi] is fixed at the bound, a fixed pixel whose multiplier would be negative is released)
-         until it no longer changes.
-    For pixel bounds the multipliers are explicit (lam_up = max(0,-grad), lam_lo = max(0,grad) on the active
-    pixels), so the result is certified by its KKT residual."""
     pr, lo, hi = prob["pr"], prob["lo"], prob["hi"]
 
     def fun(y):
@@ -487,7 +457,6 @@ def build_problems(images, rng, label, check_unique=False):
 
 
 def pack(probs, x0s):
-    """Stack problems x runs into batch arrays (problem-major)."""
     idx = [(pi, r) for pi in range(len(probs)) for r in range(len(x0s[pi]))]
     return dict(
         idx=idx,
@@ -504,10 +473,7 @@ def pick_runs(batch, sel):
 
 
 # =============================================================================
-# Solvers.  COSMIC and the Adam / projected-gradient methods are expressed as (init, step, view) triples and run inside
-# jax.lax.scan (vmapped over problems x initial points), so that
-#   * the hyperparameters are traced arguments: changing them does not change the compiled code,
-#   * the CPU time of the algorithm itself is measured without Python dispatch overhead.
+# Solvers.
 # =============================================================================
 def phi_fn(g, xi, eps):
     return xi - g - jnp.sqrt(g ** 2 + xi ** 2 + eps ** 2)
@@ -603,9 +569,7 @@ def pen_view(state, A, b, hp):
     x, rho = state[0], state[5]
     return x, rho * jnp.maximum(0.0, Aop(A, x) - b)           # penalty multiplier estimate
 
-# ---- Projected gradient descent with momentum (inference method of the ICNN paper; uses the box structure) -------
-#   v <- mom v - lr grad F(y),   y <- clip(y + v, lo, hi).   Iterates are feasible after the first step.
-#   Multipliers for the KKT metric: lam_up = max(0, -grad F) on pixels at the upper bound, lam_lo = max(0, grad F) at the lower.
+# ---- Projected gradient descent with momentum -------
 def pgd_init(x0, A, b, hp):
     return x0, jnp.zeros_like(x0)
 
@@ -636,8 +600,6 @@ SOLVERS = {"COSMIC": (cosmic_init, cosmic_step, cosmic_view),
 
 @partial(jax.jit, static_argnames=("method", "N", "log"))
 def run_batch(method, x0, A, b, xref, fref, U, params, hp, N, log):
-    """Run `method` for N iterations on a batch of (problem, initial point) pairs.
-    Returns the final iterate and, if log, (err, kkt, viol, gap) arrays of shape (B, N+1)."""
     init, step, view = SOLVERS[method]
 
     def one(x0i, Ai, bi, xri, fri, Ui):
@@ -667,11 +629,7 @@ def to_hp(method, cfg):
 
 
 # ---- Feedback linearisation (FL), from SQP_ineq: lambda from a QP (Gurobi), then
-#      x <- x - eta (grad f + J^T lambda)
 def solve_lambda(J, grad_f, h_x, K_gain, Q=None):
-    """min 0.5 l'(J J')l + (J grad_f - K h)'l  s.t. l >= 0  (non-Hessian branch of solve_lambda).
-    J is constant for linear constraints, so the caller may pass the precomputed Q = J J'.
-    Threads=1 keeps the CPU-time measurement from being spread over Gurobi worker threads."""
     m_ = J.shape[0]
     if Q is None:
         Q = J @ J.T
@@ -778,10 +736,6 @@ def finalize(err, kkt, viol, gap, cpu_step, prob, x_final):
 
 
 def time_scan_solvers(cfg_list):
-    """CPU and wall-clock seconds per iteration of the compiled solvers alone (no metric logging), on one problem.
-    All configurations are timed back to back and the TIME_REPEATS repetitions are interleaved over the configurations,
-    so that every method sees the same machine state; the fastest repetition is used.  Returns
-    {name: dict(cpu, wall, spread)} with spread = (slowest - fastest) / fastest over the repetitions."""
     one = pick_runs(eval_batch, slice(0, 1))
     args = (one["x0"], one["A"], one["b"], one["xref"], one["fref"], one["U"])
     hps = {c["name"]: to_hp(c["method"], c["cfg"]) for c in cfg_list}
